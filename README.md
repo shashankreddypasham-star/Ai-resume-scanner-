@@ -1,2 +1,2 @@
 # Ai-resume-scanner-
-Ai resume scanner is a software system that uses artificial intelligence and machine learning to automatically analyze filter and gives the ranks resumes based a job's requirements
+Ai resume scanner is a software system that uses artificial intelligence and machine learning,It reads resumes and helps to understands resume content and it matches resumes with job description and it ranks candidate based on sutability and finnaly filters out irrelevent resumes . The main techonlogies used in this is natural language processeing,machine learning,keyword matching and AI modules
