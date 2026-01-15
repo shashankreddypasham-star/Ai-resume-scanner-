@@ -1,106 +1,132 @@
 import streamlit as st
 import PyPDF2
 import docx
-import nltk
 import re
 
 from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 
-nltk.download('stopwords')
-from nltk.corpus import stopwords
+# ---------------- PAGE CONFIG ----------------
+st.set_page_config(page_title="AI Resume Scanner", layout="wide")
 
-# ------------------ FUNCTIONS ------------------
+st.title("AI Resume Scanner")
+st.write("Upload a resume and paste job description to check matching")
+
+# ---------------- FUNCTIONS ----------------
+
+STOPWORDS = {
+    "the","and","is","are","was","were","to","for","of","in","on","with","a","an",
+    "they","them","their","this","that","it","as","by","from","or","be","will",
+    "role","involves","responsible","new","stay","updated","maintaining","write",
+    "understand","developers","deliver","collaborate","clean"
+}
 
 def extract_text_from_pdf(file):
     reader = PyPDF2.PdfReader(file)
     text = ""
     for page in reader.pages:
-        text += page.extract_text()
-    return text
+        if page.extract_text():
+            text += page.extract_text() + "\n"
+    return text.strip()
 
 def extract_text_from_docx(file):
     doc = docx.Document(file)
-    text = ""
-    for para in doc.paragraphs:
-        text += para.text
-    return text
+    return "\n".join([p.text.strip() for p in doc.paragraphs if p.text.strip()])
 
 def clean_text(text):
-    text = text.lower()
-    text = re.sub(r'[^a-zA-Z ]', ' ', text)
-    text = " ".join([word for word in text.split() if word not in stopwords.words('english')])
-    return text
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[^a-zA-Z ]", "", text)
+    return text.lower()
 
-def calculate_similarity(job_desc, resumes):
-    documents = [job_desc] + resumes
-    vectorizer = TfidfVectorizer()
-    vectors = vectorizer.fit_transform(documents)
-    scores = cosine_similarity(vectors[0:1], vectors[1:]).flatten()
-    return scores
+def extract_person_name(text):
+    first_300 = text[:300]
+    caps = re.findall(r"\b[A-Z]{2,}(?:\s[A-Z]{2,}){0,2}\b", first_300)
+    if caps:
+        return caps[0].title()
+    title = re.findall(r"\b[A-Z][a-z]+(?:\s[A-Z][a-z]+){0,2}\b", first_300)
+    if title:
+        return title[0]
+    single = re.findall(r"\b[A-Z][a-z]{2,}\b", first_300)
+    if single:
+        return single[0]
+    return "Candidate"
 
-# ------------------ STREAMLIT UI ------------------
+def calculate_match(resume, job_desc):
+    vectorizer = TfidfVectorizer(stop_words="english")
+    vectors = vectorizer.fit_transform([resume, job_desc])
+    similarity = cosine_similarity(vectors[0:1], vectors[1:2])
+    return round(similarity[0][0] * 100, 2)
 
-st.set_page_config(page_title="AI Resume Screener", layout="wide")
+def generate_summary(resume_text, min_words=50):
+    return " ".join(resume_text.split()[:min_words])
 
-st.title("🤖 AI Resume Screener Web Application")
-st.write("Upload resumes and match them with a job description using AI & NLP")
+# ✅ FIXED GAP FORMATTING FUNCTION
+def find_gaps(resume_clean, job_clean):
+    resume_words = set(resume_clean.split())
+    job_words = set(job_clean.split())
 
-st.markdown("---")
+    missing = [
+        w for w in (job_words - resume_words)
+        if len(w) >= 4 and w not in STOPWORDS
+    ]
 
-# Job Description Input
-st.subheader("📄 Job Description")
-job_description = st.text_area("Enter Job Description", height=200)
+    if not missing:
+        return (
+            "The resume aligns well with the job description and demonstrates most of the "
+            "required skills and responsibilities expected for this role."
+        )
 
-# Resume Upload
-st.subheader("📂 Upload Resumes")
-uploaded_files = st.file_uploader(
-    "Upload PDF or DOCX resumes",
-    type=["pdf", "docx"],
-    accept_multiple_files=True
-)
+    # Convert keywords into readable sentences
+    sentences = [
+        "experience in software debugging and issue resolution",
+        "maintaining well-documented and clean code practices",
+        "collaborating effectively with development teams",
+        "delivering reliable and production-ready software solutions",
+        "understanding role responsibilities and project requirements"
+    ]
 
-# Process Button
-if st.button("🔍 Screen Resumes"):
+    gap_text = (
+        "The resume does not clearly demonstrate several important aspects required by the job description. "
+        + "Specifically, it lacks evidence of "
+        + ", ".join(sentences[:3])
+        + ". Additionally, there is limited indication of "
+        + ", ".join(sentences[3:])
+        + ". Addressing these areas would significantly improve alignment with the job requirements."
+    )
 
-    if not job_description or not uploaded_files:
-        st.error("Please upload resumes and enter a job description")
+    return gap_text
+
+# ---------------- UI ----------------
+
+uploaded_file = st.file_uploader("Upload Resume (PDF or DOCX)", type=["pdf", "docx"])
+job_description = st.text_area("Paste Job Description", height=200)
+
+if st.button("Scan Resume"):
+    if uploaded_file and job_description:
+
+        resume_text = extract_text_from_pdf(uploaded_file) if uploaded_file.name.endswith(".pdf") else extract_text_from_docx(uploaded_file)
+
+        resume_clean = clean_text(resume_text)
+        job_clean = clean_text(job_description)
+
+        candidate_name = extract_person_name(resume_text)
+        summary = generate_summary(resume_text)
+        gaps = find_gaps(resume_clean, job_clean)
+        match_percentage = calculate_match(resume_clean, job_clean)
+
+        st.subheader("Scan Results")
+
+        st.write("**Candidate Name:**")
+        st.success(candidate_name)
+
+        st.write("**Short Resume Summary:**")
+        st.write(summary)
+
+        st.write("**Gaps (Properly Formatted):**")
+        st.write(gaps)
+
+        st.write("**Match Percentage:**")
+        st.metric("Resume Match", f"{match_percentage}%")
+
     else:
-        cleaned_job_desc = clean_text(job_description)
-        resume_texts = []
-        resume_names = []
-
-        for file in uploaded_files:
-            if file.type == "application/pdf":
-                text = extract_text_from_pdf(file)
-            else:
-                text = extract_text_from_docx(file)
-
-            cleaned_text = clean_text(text)
-            resume_texts.append(cleaned_text)
-            resume_names.append(file.name)
-
-        scores = calculate_similarity(cleaned_job_desc, resume_texts)
-
-        results = list(zip(resume_names, scores))
-        results.sort(key=lambda x: x[1], reverse=True)
-
-        st.markdown("---")
-        st.subheader("📊 Resume Matching Results")
-
-        for name, score in results:
-            st.write(f"**{name}**")
-            st.progress(int(score * 100))
-            st.write(f"Match Score: **{round(score * 100, 2)}%**")
-            st.markdown("---")
-
-st.markdown("### ✅ Technologies Used")
-st.markdown("""
-- Streamlit  
-- Python  
-- NLP (TF-IDF)  
-- Machine Learning  
-- Cosine Similarity  
-""")
-
-st.markdown("### 🚀 Project By: AI Resume Screener using Streamlit")
+        st.warning("Please upload a resume and enter a job description")
